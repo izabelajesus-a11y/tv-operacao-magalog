@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>TVOPERAÇAO</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+
+            width: 100%;
+            height: 100%;
+
+            overflow: hidden;
+
+            background: #000;
+        }
+
+        /* =====================================================
+           CURSOR
+        ===================================================== */
+
+        body.ocultar-cursor,
+        body.ocultar-cursor * {
+            cursor: none !important;
+        }
+
+
+        /* =====================================================
+           SLIDES
+        ===================================================== */
+
+        iframe {
+            position: fixed;
+
+            inset: 0;
+
+            width: 100vw;
+            height: 100vh;
+
+            border: none;
+
+            background: #000;
+
+            transition: opacity 1s ease-in-out;
+        }
+
+
+        iframe.ativo {
+            opacity: 1;
+            z-index: 2;
+        }
+
+
+        iframe.reserva {
+            opacity: 0;
+            z-index: 1;
+
+            pointer-events: none;
+        }
+
+
+        /* =====================================================
+           CARREGAMENTO
+        ===================================================== */
+
+        #carregando {
+            position: fixed;
+
+            inset: 0;
+
+            display: flex;
+            justify-content: center;
+            align-items: center;
+
+            background: #0d1117;
+
+            color: white;
+
+            font-family: Arial, sans-serif;
+            font-size: 24px;
+
+            z-index: 0;
+        }
+
+
+        /* =====================================================
+           FADE DA ATUALIZAÇÃO
+        ===================================================== */
+
+        #fade {
+            position: fixed;
+
+            inset: 0;
+
+            background: #000;
+
+            opacity: 0;
+
+            pointer-events: none;
+
+            z-index: 999;
+
+            transition: opacity 0.5s ease-in-out;
+        }
+
+
+        #fade.visivel {
+            opacity: 0.35;
+        }
+    </style>
+
+</head>
+
+
+<body>
+
+
+    <div id="carregando">
+        Carregando apresentação...
+    </div>
+
+
+    <!-- Apresentação que está aparecendo na TV -->
+
+    <iframe
+        id="slideA"
+        class="ativo"
+        allow="autoplay"
+        allowfullscreen>
+    </iframe>
+
+
+    <!-- Utilizado somente na atualização -->
+
+    <iframe
+        id="slideB"
+        class="reserva"
+        allow="autoplay"
+        allowfullscreen>
+    </iframe>
+
+
+    <div id="fade"></div>
+
+
+
+    <script>
+
+        /* =====================================================
+           CONFIGURAÇÕES
+        ===================================================== */
+
+        const PRESENTATION_ID =
+            "1AvPld88XCJWsz5b1zJhV7ajNFuGWwp0GzIMxlMJSYa0";
+
+
+        /*
+            TEMPO POR SLIDE
+
+            10000 ms = 10 segundos
+        */
+
+        const TEMPO_SLIDE = 10000;
+
+
+        /*
+            QUANTIDADE MÁXIMA ESPERADA
+
+            IMPORTANTE:
+
+            Não significa que precisam existir 100 slides.
+
+            Se houver 20 slides:
+            passa 1 até 20
+            volta para 1
+            continua normalmente.
+
+            Se houver 60:
+            passa 1 até 60
+            volta para 1.
+
+            Se houver 100:
+            passa todos os 100.
+        */
+
+        const MAX_SLIDES = 100;
+
+
+        /*
+            JANELA SEGURA DE ATUALIZAÇÃO
+
+            100 slides × 10 segundos
+
+            = 1000 segundos
+            = 16 minutos e 40 segundos
+
+            Isso impede que uma atualização
+            interrompa a apresentação no slide 12,
+            20, 30 etc.
+        */
+
+        const TEMPO_ATUALIZACAO =
+            MAX_SLIDES * TEMPO_SLIDE;
+
+
+        /*
+            Mouse desaparece após
+            3 segundos parado.
+        */
+
+        const TEMPO_MOUSE = 3000;
+
+
+
+        /* =====================================================
+           CRIAR URL
+        ===================================================== */
+
+        function criarURL() {
+
+            return (
+
+                "https://docs.google.com/presentation/d/" +
+
+                PRESENTATION_ID +
+
+                "/preview" +
+
+                "?rm=minimal" +
+
+                "&start=true" +
+
+                "&loop=true" +
+
+                "&delayms=" +
+
+                TEMPO_SLIDE +
+
+                /*
+                    Parâmetro para impedir
+                    cache da versão anterior.
+                */
+
+                "&refresh=" +
+
+                Date.now()
+            );
+        }
+
+
+
+        /* =====================================================
+           REFERÊNCIAS
+        ===================================================== */
+
+        let iframeAtivo =
+            document.getElementById("slideA");
+
+
+        let iframeReserva =
+            document.getElementById("slideB");
+
+
+        const fade =
+            document.getElementById("fade");
+
+
+
+        /* =====================================================
+           CARREGAMENTO INICIAL
+        ===================================================== */
+
+        iframeAtivo.src =
+            criarURL();
+
+
+
+        iframeAtivo.addEventListener(
+            "load",
+
+            function () {
+
+                console.log(
+                    "Apresentação carregada às:",
+                    new Date().toLocaleTimeString()
+                );
+            }
+        );
+
+
+
+        /* =====================================================
+           WAKE LOCK
+           MANTER A TELA ACESA
+        ===================================================== */
+
+        let wakeLock = null;
+
+
+
+        async function manterTelaAcesa() {
+
+            try {
+
+
+                if (!("wakeLock" in navigator)) {
+
+                    console.warn(
+                        "Wake Lock não suportado neste navegador."
+                    );
+
+                    return;
+                }
+
+
+                /*
+                    Se já existe um Wake Lock ativo,
+                    não cria outro.
+                */
+
+                if (
+                    wakeLock &&
+                    wakeLock.released === false
+                ) {
+
+                    return;
+                }
+
+
+                wakeLock =
+                    await navigator.wakeLock.request(
+                        "screen"
+                    );
+
+
+                console.log(
+                    "Wake Lock ATIVO às:",
+                    new Date().toLocaleTimeString()
+                );
+
+
+                wakeLock.addEventListener(
+                    "release",
+
+                    function () {
+
+                        console.warn(
+                            "Wake Lock foi liberado."
+                        );
+                    }
+                );
+
+            }
+
+            catch (erro) {
+
+                console.error(
+                    "Erro no Wake Lock:",
+                    erro
+                );
+            }
+        }
+
+
+
+        /*
+            Ativa ao abrir.
+        */
+
+        manterTelaAcesa();
+
+
+
+        /*
+            Se sair da janela e voltar,
+            ativa novamente.
+        */
+
+        document.addEventListener(
+            "visibilitychange",
+
+            function () {
+
+                if (
+                    document.visibilityState ===
+                    "visible"
+                ) {
+
+                    manterTelaAcesa();
+                }
+            }
+        );
+
+
+
+        /*
+            Quando a janela ganha foco.
+        */
+
+        window.addEventListener(
+            "focus",
+            manterTelaAcesa
+        );
+
+
+
+        /*
+            Segurança adicional:
+
+            verifica a cada 30 segundos
+            se o Wake Lock continua funcionando.
+        */
+
+        setInterval(
+
+            function () {
+
+                if (
+                    document.visibilityState ===
+                    "visible"
+                ) {
+
+                    manterTelaAcesa();
+                }
+
+            },
+
+            30000
+
+        );
+
+
+
+        /* =====================================================
+           CURSOR
+        ===================================================== */
+
+        let timerMouse = null;
+
+
+
+        function mostrarMouse() {
+
+
+            document.body.classList.remove(
+                "ocultar-cursor"
+            );
+
+
+            clearTimeout(
+                timerMouse
+            );
+
+
+            timerMouse =
+                setTimeout(
+
+                    function () {
+
+                        document.body.classList.add(
+                            "ocultar-cursor"
+                        );
+
+                    },
+
+                    TEMPO_MOUSE
+                );
+        }
+
+
+
+        document.addEventListener(
+            "mousemove",
+            mostrarMouse
+        );
+
+
+        document.addEventListener(
+            "mousedown",
+            mostrarMouse
+        );
+
+
+        document.addEventListener(
+            "wheel",
+            mostrarMouse
+        );
+
+
+        mostrarMouse();
+
+
+
+        /* =====================================================
+           ATUALIZAÇÃO DA APRESENTAÇÃO
+        ===================================================== */
+
+        let atualizando = false;
+
+
+
+        function prepararAtualizacao() {
+
+
+            if (atualizando) {
+
+                return;
+            }
+
+
+            atualizando = true;
+
+
+
+            console.log(
+                "Preparando versão atualizada às:",
+                new Date().toLocaleTimeString()
+            );
+
+
+
+            /*
+                A versão atual CONTINUA NA TELA.
+
+                A nova é carregada escondida.
+            */
+
+            iframeReserva.onload = null;
+
+
+            iframeReserva.src =
+                criarURL();
+
+
+
+            iframeReserva.onload =
+                function () {
+
+
+                    console.log(
+                        "Nova versão carregada."
+                    );
+
+
+                    trocarVersao();
+                };
+        }
+
+
+
+        /* =====================================================
+           TROCA SUAVE
+        ===================================================== */
+
+        function trocarVersao() {
+
+
+            const antigo =
+                iframeAtivo;
+
+
+            const novo =
+                iframeReserva;
+
+
+
+            /*
+                Pequeno fade.
+            */
+
+            fade.classList.add(
+                "visivel"
+            );
+
+
+
+            setTimeout(
+
+                function () {
+
+
+                    /*
+                        Nova apresentação
+                        passa para frente.
+                    */
+
+                    novo.classList.remove(
+                        "reserva"
+                    );
+
+
+                    novo.classList.add(
+                        "ativo"
+                    );
+
+
+
+                    /*
+                        Antiga fica escondida.
+                    */
+
+                    antigo.classList.remove(
+                        "ativo"
+                    );
+
+
+                    antigo.classList.add(
+                        "reserva"
+                    );
+
+
+
+                    /*
+                        Troca referências.
+                    */
+
+                    iframeAtivo =
+                        novo;
+
+
+                    iframeReserva =
+                        antigo;
+
+
+
+                    /*
+                        Remove fade.
+                    */
+
+                    setTimeout(
+
+                        function () {
+
+                            fade.classList.remove(
+                                "visivel"
+                            );
+
+                        },
+
+                        300
+                    );
+
+
+
+                    /*
+                        Limpa apresentação antiga
+                        somente depois da transição.
+                    */
+
+                    setTimeout(
+
+                        function () {
+
+                            iframeReserva.onload = null;
+
+                            iframeReserva.src =
+                                "about:blank";
+
+
+                            atualizando =
+                                false;
+
+
+                            console.log(
+                                "Atualização concluída às:",
+                                new Date().toLocaleTimeString()
+                            );
+
+                        },
+
+                        1500
+                    );
+
+                },
+
+                500
+            );
+        }
+
+
+
+        /* =====================================================
+           CICLO DE ATUALIZAÇÃO
+        ===================================================== */
+
+        /*
+            ATENÇÃO:
+
+            NÃO atualizamos mais a cada 1 minuto.
+
+            Isso era o que fazia a apresentação
+            voltar ao slide 1 antes de mostrar
+            todos os slides.
+
+            Agora usamos:
+
+            100 × 10 segundos
+            = 16 minutos e 40 segundos.
+
+            Portanto TODOS os slides,
+            até 100, conseguem aparecer.
+        */
+
+        setInterval(
+
+            prepararAtualizacao,
+
+            TEMPO_ATUALIZACAO
+
+        );
+
+
+
+        /* =====================================================
+           LOG
+        ===================================================== */
+
+        console.log(
+            "======================================"
+        );
+
+
+        console.log(
+            "PAINEL TV INICIADO"
+        );
+
+
+        console.log(
+            "Tempo por slide:",
+            TEMPO_SLIDE / 1000,
+            "segundos"
+        );
+
+
+        console.log(
+            "Quantidade de slides:",
+            "AUTOMÁTICA"
+        );
+
+
+        console.log(
+            "Máximo considerado:",
+            MAX_SLIDES
+        );
+
+
+        console.log(
+            "Loop:",
+            "ATIVO"
+        );
+
+
+        console.log(
+            "Atualização segura:",
+            TEMPO_ATUALIZACAO / 1000,
+            "segundos"
+        );
+
+
+        console.log(
+            "Atualização segura:",
+            "16 minutos e 40 segundos"
+        );
+
+
+        console.log(
+            "Wake Lock:",
+            "ATIVO"
+        );
+
+
+        console.log(
+            "F11:",
+            "MANUAL"
+        );
+
+
+        console.log(
+            "Mouse:",
+            "some depois de 3 segundos"
+        );
+
+
+        console.log(
+            "======================================"
+        );
+
+    </script>
+
+</body>
+
+</html>
